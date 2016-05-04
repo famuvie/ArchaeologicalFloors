@@ -1,0 +1,534 @@
+---
+title: "Reproduction of results from the paper"
+author: "Facundo Muñoz"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup}
+## Required packages
+library(ArchaeologicalFloors)
+library(geoRcb)
+library(spatstat)
+library(raster)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(gridExtra)
+library(viridis)
+library(knitr)
+
+## Plotting region
+extent.india <- extent(c(6.5, 17.5, -14.5, -7.5))
+
+## ggplot style
+theme_set(theme_tufte())
+```
+
+This vignette reproduces the results from Negre et al. 2016 using the data included in the package.
+
+We include some more results that those that made it into the paper.
+
+On the other hand, we reproduce only the results for one of the analized variables (Calcium), as the procedure for the other is identical.
+
+
+## Data description
+
+```{r reshaped-data}
+
+obs <- gather(Jandhala, variable, value, -(x:y))
+
+```
+
+```{r data-summary, cache = FALSE, fig.cap = 'Histograms of measured variables.', fig.width = 5, fig.height = 3}
+str(Jandhala)
+summary(Jandhala)
+
+ggplot(obs, aes(value)) +
+  geom_histogram() +
+  facet_wrap(~ variable, scales = 'free_x', ncol = 2) +
+  theme_bw()
+```
+
+
+
+Figures 1 and 2 display the raw data, and an exploratory smoothed surface respectively.
+
+```{r raw-data, cache = FALSE, fig.cap = 'Measurement locations and observed values', fig.width = 10, fig.height = 4}
+# plot(shp.area.trabajo)
+# plot(shp.construcciones)
+
+# shp.construcciones@data$id <- rownames(shp.construcciones@data)
+# structures <- fortify(shp.construcciones, region = 'id')
+# structures <- join(structures, shp.construcciones@data, by = 'id')
+
+plot_raw_variable <- function(var) {
+  p <- ggplot(NULL, aes(long, lat)) +
+    geom_india() +
+    scale_color_viridis() 
+  
+  gp <- paste('geom_point(aes(x, y, color =', 
+              parse(text= var), 
+              '), data = Jandhala, size = 5, shape = 15)')
+
+  p + eval(parse(text = gp))
+}
+
+p.list <- lapply(
+  levels(obs$variable),
+  plot_raw_variable
+)
+
+do.call('grid.arrange', c(p.list, list(ncol = 2)))
+```
+
+
+
+```{r smoothed-data, fig.cap = 'Exploratory kernel smoothing of the measurements', fig.width = 10, fig.height = 4}
+## Create a `spatstat`'s Point Pattern object from the coordinates.
+dat.ppp <- as.ppp(Jandhala,
+                  owin(xrange = extent.india[1:2],
+                       yrange = extent.india[3:4]))
+# plot(dat.ppp)
+
+## Relative dimensions of the region
+y2x_factor <- 1/do.call('/', as.list(diff(t(bbox(extent.india)))))
+dimyx <- round(128 * c(y2x_factor, 1))
+
+smooth.im <- Smooth(dat.ppp, dimyx = dimyx, sigma = 1)
+# plot(smooth.im)
+smooth.dat <- as.data.frame(smooth.im)
+
+plot_smoothed_variable <- function(var) {
+  pt <- paste0('ggplot(smooth.dat, aes(', var, '.x, ', var, '.y))') 
+  rt <- paste0('geom_raster(aes(fill = ', var, '.value))')
+  
+  eval(parse(text = pt)) + 
+    eval(parse(text = rt)) +
+    geom_india() +
+    scale_fill_viridis() 
+}
+
+p.list <- lapply(
+  levels(obs$variable),
+  plot_smoothed_variable
+)
+
+do.call('grid.arrange', c(p.list, list(ncol = 2)))
+
+```
+
+
+
+
+
+# Cost-based distances
+
+
+```{r setup-conductivity-surface}
+
+## Conductivity surface
+res <- 0.05
+prediction_grid <- raster(extent.india, resolution = res)
+cond_surf <- rasterize(ArchaeologicalFloors:::walls,
+                       prediction_grid, field = 0, background = 1)
+# plot(cond_surf)
+
+```
+
+We use functions from the `raster` package to set up the cost surface as a raster map at a resolution of `r res` m.
+We then *rasterize* the walls into this map, assigning a value of 0 to the corresponding raster cells, and a value of 1 for the rest.
+
+This represents a **conductivity** surface (i.e. inverse cost).
+
+
+```{r setup-obs-and-prediction-locations, cache = FALSE}
+obs.gd <- as.geodata(Jandhala, 
+                     data.col=levels(obs$variable),
+                     na.action = 'none')
+loc <- coordinates(cond_surf)
+```
+
+
+```{r setup-cost-based-distances}
+
+## Compute cost-based distances
+ddm <- distmatGen(Jandhala[, c('x', 'y')], cond_surf)
+
+## Remove prediction locations at the walls (i.e. conductivity of 0)
+## since they are 'infinitely' far from everywhere
+idx <- which(values(cond_surf)==0)
+loc <- loc[-idx, ]
+ddm$loc <- ddm$loc[-idx, ]
+
+```
+
+Here we set up the cost-based surface, and compute a few cost-based maps, for verifications purposes.
+
+```{r setup-some-cost-based-maps, fig.width = 10, fig.height = 6, fig.cap = 'Some cost-based maps to selected observations.'}
+## Cost-based maps to each observation
+cb.maps <-  
+  cbind(loc, ddm$loc) %>%
+  as.data.frame() %>% 
+  gather("Observation", "Distance", -(x:y))
+
+## Select four observations at intereseting locations
+idx <- c(4, 30, 43, 69)
+
+## Coordinates of the selected focus observations
+obs.idx <- cbind(
+  Jandhala[idx, ],
+  Observation = factor(
+    levels(cb.maps$Observation)[idx],
+    levels = levels(cb.maps$Observation))
+)
+
+cb.maps %>% 
+  filter(Observation %in% levels(cb.maps$Observation)[idx]) %>% 
+  ggplot(aes(x, y)) + 
+  geom_raster(aes(fill = Distance, color = Distance)) +
+  stat_contour(aes(z = Distance), binwidth = 1, color = 'lightgray') +
+  scale_fill_viridis() +
+  scale_color_viridis() +
+  geom_india() +
+  geom_point(data = obs.idx, col = 'white') +
+  facet_wrap(~ Observation)
+
+```
+
+
+
+
+
+# Analysis of Calcium
+
+```{r Ca-fix-variable}
+variable <- obs.gd$data[, 'Ca']
+```
+
+
+## Euclidean kriging
+
+
+The variogram model is Exponential.
+We choose to estimate the nugget effect, which may account for measurement error, for example.
+
+
+
+```{r Ca-euclidean-kriging, include = FALSE}
+
+## compute euclidean (only) variogram
+vg.std.Ca <- geoR::variog(obs.gd, data = variable)
+
+## fitting variogram models
+vgmdl.std.Ca <- likfit(
+  geodata = obs.gd,
+  data = variable,
+  fix.nugget = FALSE,
+  fix.kappa = FALSE,
+  # kappa = 0.51,  # If 0.5 then cov.model changes to exponential
+  ini = c(10, 5),  # sigma^2 (partial sill) and phi (range parameter)
+  cov.model = "exponential",
+  lik.method = "REML"
+)
+
+## Fitted parameters
+par.tab <- data.frame(
+  Euclidean = with(vgmdl.std.Ca,
+                   c(beta,
+                     nugget,
+                     sigmasq,
+                     # kappa,
+                     phi,
+                     practicalRange,
+                     loglik)),
+  row.names = c("Intercept",
+                "Nugget",
+                "Partial sill",
+                # "kappa",
+                "phi",
+                "Pract. range",
+                "Log-likelihood"))
+
+
+# Conventional Kriging, Euclidean distances
+KC.std.Ca = krige.control(obj.model = vgmdl.std.Ca)
+kriging.std.Ca <- krige.conv(
+  obs.gd,
+  data = variable,
+  locations = loc,
+  krige = KC.std.Ca
+)
+
+```
+
+```{r Ca-euclidean-variogram-plot, fig.width = 6, fig.height = 3, fig.cap = 'Empirical variogram and fitted model.'}
+
+ggplot(vg.std.Ca) + 
+  geom_variogram(vgmdl.std.Ca) + 
+  ylab('semivariance Ca')
+
+```
+
+
+```{r Ca-euclidean-kriging-estimates, fig.width=6, fig.height=4, fig.cap = 'Euclidean kriging prediction'}
+
+p.Ca <- ggplot(data.frame(loc, Prediction = kriging.std.Ca$predict), aes(x, y)) +
+  geom_raster(aes(fill = Prediction, colour = Prediction)) +
+  stat_contour(aes(z = Prediction), color = 'lightgray') +
+  geom_india() +
+  scale_fill_viridis() +
+  scale_color_viridis()
+
+p.Ca
+
+```
+
+
+
+## Cost-based kriging
+
+
+
+```{r Ca-cost-based-kriging, include=FALSE}
+
+## compute cost-based empirical variogram
+vg.cst.Ca <- geoR::variog(obs.gd, data = variable, dists.mat = ddm$obs)
+
+## fitting variogram models
+vgmdl.cst.Ca <- likfit(
+  geodata = obs.gd,
+  data = variable,
+  fix.nugget = FALSE,
+  fix.kappa = FALSE,
+  # kappa = 0.51,  # If 0.5 then cov.model changes to exponential
+  ini = c(10, 5),  # sigma^2 (partial sill) and phi (range parameter)
+  cov.model = "exponential",
+  lik.method = "REML",
+  dists.mat = ddm$obs
+  )
+
+## Fitted parameters
+par.tab <- cbind(
+  par.tab,
+  data.frame(
+    Cost_based = with(
+      vgmdl.cst.Ca,
+      c(beta,
+        nugget,
+        sigmasq,
+        # kappa,
+        phi,
+        practicalRange,
+        loglik)))
+)
+
+
+# Conventional Kriging, Cost-based distances
+KC.cst.Ca = krige.control(obj.model = vgmdl.cst.Ca)
+kriging.cst.Ca <- krige.conv(
+  obs.gd,
+  data = variable,
+  locations = loc,
+  krige = KC.cst.Ca,
+  dd.dists.mat = ddm$obs,
+  dl.dists.mat = ddm$loc
+)
+
+```
+
+
+
+```{r Ca-cost-based-variogram-plot, fig.width = 6, fig.height = 3, fig.cap = 'Empirical cost-based variogram and fitted model.'}
+
+ggplot(vg.cst.Ca) +
+  geom_variogram(vgmdl.cst.Ca) +
+  ylab('semivariance Ca')
+
+```
+
+
+```{r Ca-cost-based-kriging-estimates, fig.width=6, fig.height=4, fig.cap = 'Cost-based kriging prediction'}
+
+p.Ca <- ggplot(data.frame(loc, Prediction = kriging.cst.Ca$predict), aes(x, y)) +
+  geom_raster(aes(fill = Prediction, colour = Prediction)) +
+  stat_contour(aes(z = Prediction), color = 'lightgray') +
+  geom_india() +
+  scale_fill_viridis() +
+  scale_color_viridis()
+
+p.Ca
+
+```
+
+
+
+## Comparison of method outcomes
+
+```{r Ca-parameter-table}
+kable(par.tab, digits = 2)
+```
+
+
+```{r Ca-compare-variogram-plot, fig.width = 6, fig.height = 4, fig.cap = 'Empirical variogram and fitted models by method for Calcium.'}
+
+vg.both <- rbind(data.frame(vg.std.Ca[1:3],
+                            variable = 'Ca',
+                            method = 'Euclidean'),
+                 data.frame(vg.cst.Ca[1:3],
+                            variable = 'Ca',
+                            method = 'Cost-based'))
+
+names(vg.both) <- c('distance', 'semivariance', 'n', 'variable', 'method')
+
+p.Ca <- ggplot(vg.both, aes(distance, semivariance)) +
+  geom_point(aes(size = n)) + 
+  expand_limits(y=0) +
+  geom_variogram(vgmdl.std.Ca, variable = 'Ca', method = 'Euclidean') +
+  geom_variogram(vgmdl.cst.Ca, variable = 'Ca', method = 'Cost-based') +
+  facet_grid(method ~ .) +
+  theme_bw()
+
+p.Ca
+
+```
+
+
+
+
+```{r Ca-compare-kriging-estimates, fig.width=6, fig.height=8, fig.cap = 'Comparison of Kriging estimates.'}
+
+res.df.Ca <- data.frame(
+  loc, 
+  method = c(rep('Classical', nrow(loc)),
+             rep('Cost-based', nrow(loc)),
+             rep('Difference', nrow(loc))),
+  Prediction = c(kriging.std.Ca$predict,
+                 kriging.cst.Ca$predict,
+                 kriging.std.Ca$predict-kriging.cst.Ca$predict)
+)
+
+
+p.Ca <- 
+  ggplot(filter(res.df.Ca, method != 'Difference'),
+         aes(x, y)) + 
+  geom_raster(aes(fill = Prediction, colour = Prediction)) +
+  stat_contour(aes(z = Prediction), binwidth = .2, color = 'lightgray') +
+  geom_india() +
+  scale_fill_viridis() +
+  scale_color_viridis() +
+  facet_wrap(~method, ncol = 1) 
+
+
+p.Ca
+```
+
+
+```{r Ca-cost-based-vs-euclidean-prediction, fig.cap = 'Pointwise comparison of predictions by method.'}
+
+## Only represent a random sample of all 30k prediction points
+p.Ca <- data.frame(Euclidean  = kriging.std.Ca$predict,
+                   Cost_based = kriging.cst.Ca$predict,
+                   variable   = 'Ca') %>% 
+  sample_n(5e3) %>% 
+  ggplot(aes(Euclidean, Cost_based)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, col = 'darkgray')
+
+
+p.Ca
+
+```
+
+
+
+```{r Ca-map-kriging-difference, fig.width=6, fig.height=4, fig.cap='Difference between the Euclidean and the cost-based predictions.'}
+
+pred.dif.Ca <- 
+  ggplot(filter(res.df.Ca, method == 'Difference'),
+         aes(x, y)) + 
+  geom_tile(aes(fill = Prediction, colour = Prediction)) +
+  stat_contour(aes(z = Prediction), binwidth = .2, color = 'lightgray') +
+  geom_india() +
+  scale_fill_viridis(name = 'Difference in\npredictions') +
+  scale_color_viridis(name = 'Difference in\npredictions')
+
+pred.dif.Ca
+# grid.arrange(pred.comp, pred.dif)
+```
+
+
+
+
+
+```{r Ca-compare-kriging-errors, fig.width=6, fig.height=8, fig.cap = 'Comparison of prediction error by method.'}
+
+res.var.Ca <- data.frame(
+  loc, 
+  method = c(rep('Classical', nrow(loc)),
+             rep('Cost-based', nrow(loc)),
+             rep('Difference', nrow(loc))),
+  Prediction = c(kriging.std.Ca$krige.var,
+                 kriging.cst.Ca$krige.var,
+                 kriging.std.Ca$krige.var-kriging.cst.Ca$krige.var)
+)
+
+ggplot(filter(res.var.Ca, method != 'Difference'),
+         aes(x, y)) + 
+  geom_raster(aes(fill = Prediction, colour = Prediction)) +
+  stat_contour(aes(z = Prediction), binwidth = .2, color = 'lightgray') +
+  geom_india() +
+  scale_fill_viridis(name = 'Kriging\nvariance') +
+  scale_color_viridis(name = 'Kriging\nvariance') +
+  facet_wrap(~method, ncol = 1) 
+
+```
+
+
+```{r Ca-map-kriging-difference-errors, fig.width=6, fig.height=4, fig.cap='Difference between the Euclidean and the cost-based prediction errors'}
+
+ggplot(filter(res.var.Ca, method == 'Difference'),
+         aes(x, y)) + 
+  geom_tile(aes(fill = Prediction, colour = Prediction)) +
+  stat_contour(aes(z = Prediction), binwidth = .2, color = 'lightgray') +
+  geom_india() +
+  scale_fill_viridis(name = 'Difference in\nKriging variance') +
+  scale_color_viridis(name = 'Difference in\nKriging variance')
+```
+
+Near the observations, the cost-based approach has a larger prediction error due to its increased estimation of the nugget (i.e. short-range variance).
+In the main area, the prediction errors are practically the same with both approaches.
+Behind the walls, the Euclidean prediction error is unrealistically low.
+
+
+## Leave-one-out Cross Validation (LOOCV)
+
+```{r Ca-loocv, fig.width = 4, fig.height = 3, fig.cap = 'Pointwise leave-one-out prediction error by method.'}
+loocvdat <- obs.gd
+loocvdat$data <- variable
+res <- sapply(c('std', 'cst'), krige.loocv, loocvdat, ddm)
+
+pred_error <- data.frame(
+  std = loocvdat$data - res[, 1],
+  cst = loocvdat$data - res[, 2]
+)
+
+ggplot(pred_error, aes(std, cst)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1)
+
+rmse <- function(x) sqrt(mean(x**2))
+
+pred_error %>% 
+  gather(method, error) %>% 
+  group_by(method) %>% 
+  summarise(rmse(error)) %>% 
+  kable(digits = 2)
+
+```

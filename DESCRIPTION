@@ -1,0 +1,27 @@
+Package: ArchaeologicalFloors
+Type: Package
+Title: Companion to the Paper "Archaeological Floors"
+Version: 0.1-0
+Date: 2016-05-03
+Author: Facundo Muñoz
+Maintainer: Facundo Muñoz <facundo.munoz@orleans.inra.fr>
+Description: Data and code to reproduce the results in
+    J. Negre, F. Muñoz, C. Lancelotti (2016).
+    Geostatistical modelling of chemical residues on archaeological floors
+    in the presence of barriers. Journal of Archaeological Science 70 (2016) 91--101
+License: GPL (>= 3)
+LazyData: TRUE
+Encoding: UTF-8
+RoxygenNote: 5.0.1
+Depends: R (>= 2.10)
+Imports: geoRcb, ggplot2
+Suggests: dplyr,
+    ggthemes,
+    gridExtra,
+    knitr,
+    rmarkdown,
+    raster,
+    spatstat,
+    tidyr,
+    viridis,
+VignetteBuilder: knitr
