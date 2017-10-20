@@ -42,7 +42,7 @@ On the other hand, we reproduce only the results for one of the analized variabl
 
 ```{r reshaped-data}
 
-obs <- gather(Jandhala, variable, value, -(x:y))
+obs <- gather(Jandhala, variable, value, -(x:y), factor_key = TRUE)
 
 ```
 
@@ -177,7 +177,7 @@ Here we set up the cost-based surface, and compute a few cost-based maps, for ve
 cb.maps <-  
   cbind(loc, ddm$loc) %>%
   as.data.frame() %>% 
-  gather("Observation", "Distance", -(x:y))
+  gather("Observation", "Distance", -(x:y), factor_key = TRUE)
 
 ## Select four observations at intereseting locations
 idx <- c(4, 30, 43, 69)
