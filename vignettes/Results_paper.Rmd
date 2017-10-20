@@ -160,6 +160,7 @@ loc <- coordinates(cond_surf)
 
 ## Compute cost-based distances
 ddm <- distmatGen(Jandhala[, c('x', 'y')], cond_surf)
+names(ddm) <- c("obs", "loc")
 
 ## Remove prediction locations at the walls (i.e. conductivity of 0)
 ## since they are 'infinitely' far from everywhere
